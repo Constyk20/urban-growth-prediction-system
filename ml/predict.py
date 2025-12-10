@@ -12,7 +12,7 @@ import shutil
 
 # Load model once at startup
 MODEL_PATH = "ml/model/unet_model.h5"
-model = tf.keras.models.load_model(MODEL_PATH)
+model = tf.keras.models.load_model(MODEL_PATH, compile=False)
 
 def run_prediction(zip_url: str, aoi_json: str):
     aoi = json.loads(aoi_json)

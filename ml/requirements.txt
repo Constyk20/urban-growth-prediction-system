@@ -1,5 +1,5 @@
-# ml/requirements.txt — FULLY COMPATIBLE WITH RENDER FREE TIER
-tensorflow-cpu==2.16.1
+# ml/requirements.txt — UPDATED FOR DECEMBER 2025 (TensorFlow 2.20.0)
+tensorflow-cpu==2.20.0
 numpy==1.26.4
 rasterio==1.3.10
 requests==2.31.0
