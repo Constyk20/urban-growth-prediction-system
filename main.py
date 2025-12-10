@@ -1,21 +1,12 @@
-# main.py — Urban Growth Prediction API (FastAPI + RQ Worker in ONE Process)
-from fastapi import FastAPI, File, UploadFile, HTTPException
+# main.py — 100% MOCK NIGERIA-BASED (no Redis, no DB, no real ML)
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import os
-import uuid
-import shutil
-import json
-import threading
-from motor.motor_asyncio import AsyncIOMotorClient
-from redis import Redis
-from rq import Queue
-from rq.job import Job
+import random
+import asyncio
 
-# === FastAPI App ===
-app = FastAPI(title="Urban Growth Prediction System", version="1.0")
+app = FastAPI(title="Urban Growth Predictor - Nigeria")
 
-# CORS for Flutter
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -24,98 +15,47 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# === Database & Queue ===
-MONGO_URI = os.getenv("MONGO_URI", "mongodb+srv://lwlblessings_db_user:AaKJxe3IH6Gj5VmO@urban-growth.cshbjfi.mongodb.net/?appName=urban-growth")
-REDIS_URL = os.getenv("REDIS_URL", "redis://default:AUuWAAIncDI0NmNhNGExMDFkMDg0Njg0YTA0OTZlNWNiMWQ0ODVlY3AyMTkzNTA@artistic-boxer-19350.upstash.io:6379")
+# Nigerian cities with mock growth data
+NIGERIA_CITIES = {
+    "Lagos": {"current": 12.8, "predicted": 18.5, "growth": 45},
+    "Abuja": {"current": 4.2, "predicted": 7.1, "growth": 69},
+    "Kano": {"current": 3.9, "predicted": 5.8, "growth": 49},
+    "Ibadan": {"current": 3.5, "predicted": 5.2, "growth": 49},
+    "Port Harcourt": {"current": 2.8, "predicted": 4.6, "growth": 64},
+    "Enugu": {"current": 1.1, "predicted": 2.3, "growth": 109},
+    "Kaduna": {"current": 1.6, "predicted": 2.9, "growth": 81},
+}
 
-client = AsyncIOMotorClient(MONGO_URI)
-db = client.urban_growth
-tasks = db.tasks
-
-redis_conn = Redis.from_url(REDIS_URL)
-q = Queue("urban_predict", connection=redis_conn)
-
-# === Import ML Function ===
-from ml.predict import run_prediction
-
-# === Request Model ===
 class AOIRequest(BaseModel):
-    aoi: dict
+    city: str = "Lagos"
+    year: int = 2030
 
-# === Routes ===
 @app.get("/")
 async def root():
-    return {"message": "Urban Growth API LIVE — Ready for Flutter"}
+    return {"message": "Urban Growth Predictor - Nigeria (Mock Demo)"}
 
-@app.post("/api/upload")
-async def upload_file(file: UploadFile = File(...)):
-    if not file.filename.lower().endswith(".zip"):
-        raise HTTPException(400, "Only .zip files allowed")
+@app.post("/api/predict")
+async def predict(req: AOIRequest):
+    city = req.city.title()
+    if city not in NIGERIA_CITIES:
+        raise HTTPException(400, f"City '{city}' not supported")
     
-    task_id = str(uuid.uuid4())
-    os.makedirs("uploads/raw-imagery", exist_ok=True)
-    file_path = f"uploads/raw-imagery/{task_id}_{file.filename}"
+    data = NIGERIA_CITIES[city]
     
-    with open(file_path, "wb") as f:
-        shutil.copyfileobj(file.file, f)
+    # Simulate processing time
+    await asyncio.sleep(3)
     
-    await tasks.insert_one({
-        "task_id": task_id,
-        "filename": file.filename,
-        "status": "uploaded",
-        "file_path": file_path,
-        "result": None
-    })
-    
-    return {"task_id": task_id, "message": "File uploaded successfully"}
+    return {
+        "city": city,
+        "currentBuiltUpAreaHa": data["current"] * 1000,
+        "predictedBuiltUpAreaHa": data["predicted"] * 1000,
+        "growthPercent": data["growth"],
+        "confidence": round(random.uniform(0.87, 0.96), 2),
+        "year": req.year,
+        "resultUrl": "https://via.placeholder.com/800x600/228B22/FFFFFF?text=Urban+Growth+" + city.replace(" ", "+"),
+        "message": f"Rapid urbanization predicted in {city}!"
+    }
 
-@app.post("/api/predict/{task_id}")
-async def predict(task_id: str, req: AOIRequest):
-    task = await tasks.find_one({"task_id": task_id})
-    if not task or task["status"] != "uploaded":
-        raise HTTPException(400, "Invalid task or already processed")
-    
-    # Enqueue job
-    job = q.enqueue(run_prediction, task["file_path"], json.dumps(req.aoi))
-    
-    await tasks.update_one(
-        {"task_id": task_id},
-        {"$set": {"status": "processing", "job_id": job.id}}
-    )
-    
-    return {"task_id": task_id, "job_id": job.id, "status": "processing"}
-
-@app.get("/api/tasks/{task_id}")
-async def get_task(task_id: str):
-    task = await tasks.find_one({"task_id": task_id})
-    if not task:
-        raise HTTPException(404, "Task not found")
-    
-    # Check job status
-    if task["status"] == "processing" and "job_id" in task:
-        try:
-            job = Job.fetch(task["job_id"], connection=redis_conn)
-            if job.is_finished:
-                result = job.result
-                await tasks.update_one(
-                    {"task_id": task_id},
-                    {"$set": {"status": "completed", "result": result}}
-                )
-                task["status"] = "completed"
-                task["result"] = result
-        except:
-            pass
-    
-    return task
-
-# === BACKGROUND RQ WORKER (Runs in same process) ===
-def start_worker():
-    from rq.worker import SimpleWorker
-    worker = SimpleWorker([q], connection=redis_conn)
-    print("RQ Worker STARTED — Processing jobs...")
-    worker.work()
-
-# Start worker in background thread
-threading.Thread(target=start_worker, daemon=True).start()
-
-print("FastAPI + RQ Worker READY")
+@app.get("/api/cities")
+async def get_cities():
+    return {"cities": list(NIGERIA_CITIES.keys())}

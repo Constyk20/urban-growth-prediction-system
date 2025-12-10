@@ -1,12 +1,3 @@
 fastapi
 uvicorn[standard]
-python-multipart
-motor
-redis
-rq
-numpy
-tensorflow-cpu
-rasterio
-requests
-pillow
 pydantic
