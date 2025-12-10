@@ -1,4 +1,4 @@
-# ml/predict.py — FULLY WORKING ON RENDER FREE TIER
+# ml/predict.py — Updated for TF 2.20.0 & NumPy 2.1.0
 import os
 import sys
 import json
@@ -10,9 +10,9 @@ import zipfile
 import tempfile
 import shutil
 
-# Load model once at startup
+# Load model (compatible with TF 2.20.0)
 MODEL_PATH = "ml/model/unet_model.h5"
-model = tf.keras.models.load_model(MODEL_PATH, compile=False)
+model = tf.keras.models.load_model(MODEL_PATH, compile=False)  # compile=False for newer TF
 
 def run_prediction(zip_url: str, aoi_json: str):
     aoi = json.loads(aoi_json)
@@ -20,7 +20,7 @@ def run_prediction(zip_url: str, aoi_json: str):
     with tempfile.TemporaryDirectory() as tmpdir:
         zip_path = os.path.join(tmpdir, "scene.zip")
 
-        # Download zip (supports file:// and http)
+        # Download zip (file:// or http)
         if zip_url.startswith("file://"):
             shutil.copy(zip_url[7:], zip_path)
         else:
@@ -31,15 +31,15 @@ def run_prediction(zip_url: str, aoi_json: str):
                 for chunk in r.iter_content(8192):
                     f.write(chunk)
 
-        # Extract all .tif files
+        # Extract .tif files
         with zipfile.ZipFile(zip_path, 'r') as z:
             z.extractall(tmpdir)
 
         tif_files = [f for f in os.listdir(tmpdir) if f.lower().endswith('.tif')]
         if len(tif_files) < 5:
-            return {"error": f"Only {len(tif_files)} bands found"}
+            return {"error": f"Only {len(tif_files)} bands found — need 5"}
 
-        # Read and clip each band
+        # Clip each band
         clipped = []
         for tif in tif_files[:5]:
             src_path = os.path.join(tmpdir, tif)
@@ -59,7 +59,7 @@ def run_prediction(zip_url: str, aoi_json: str):
             except Exception as e:
                 return {"error": f"Clip failed: {str(e)}"}
 
-        # Stack bands
+        # Stack bands (NumPy 2.1.0 compatible)
         stack = []
         for cp in clipped:
             with rasterio.open(cp) as src:
@@ -67,7 +67,7 @@ def run_prediction(zip_url: str, aoi_json: str):
                 stack.append(band)
         img = np.stack(stack, axis=-1)  # (h, w, 5)
 
-        # Predict
+        # Predict (TF 2.20.0 compatible)
         h, w = img.shape[:2]
         pred = np.zeros((h, w), dtype=np.uint8)
         patch_size = 64
@@ -102,7 +102,6 @@ def run_prediction(zip_url: str, aoi_json: str):
         }
 
 if __name__ == "__main__":
-    # For manual testing
     if len(sys.argv) == 3:
         result = run_prediction(sys.argv[1], sys.argv[2])
         print(json.dumps(result))

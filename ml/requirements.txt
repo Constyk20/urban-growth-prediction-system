@@ -1,7 +1,7 @@
-# ml/requirements.txt — UPDATED FOR DECEMBER 2025 (TensorFlow 2.20.0)
+# ml/requirements.txt — Python 3.13 Compatible (December 2025)
 tensorflow-cpu==2.20.0
-numpy==1.26.4
-rasterio==1.3.10
+numpy==2.1.0
+rasterio==1.4.3
 requests==2.31.0
 pillow==10.3.0
 redis==5.0.8
