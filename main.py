@@ -1,17 +1,18 @@
-# main.py — Urban Growth Prediction API (FastAPI)
-from fastapi import FastAPI, File, UploadFile, HTTPException, Depends
+# main.py — Urban Growth Prediction API (FastAPI + RQ Worker in ONE Process)
+from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import os
 import uuid
 import shutil
 import json
+import threading
 from motor.motor_asyncio import AsyncIOMotorClient
 from redis import Redis
 from rq import Queue
-import asyncio
+from rq.job import Job
 
+# === FastAPI App ===
 app = FastAPI(title="Urban Growth Prediction System", version="1.0")
 
 # CORS for Flutter
@@ -23,26 +24,32 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# MongoDB
-client = AsyncIOMotorClient(os.getenv("MONGO_URI", "mongodb+srv://lwlblessings_db_user:AaKJxe3IH6Gj5VmO@urban-growth.cshbjfi.mongodb.net/?appName=urban-growth"))
+# === Database & Queue ===
+MONGO_URI = os.getenv("MONGO_URI", "mongodb+srv://lwlblessings_db_user:AaKJxe3IH6Gj5VmO@urban-growth.cshbjfi.mongodb.net/?appName=urban-growth")
+REDIS_URL = os.getenv("REDIS_URL", "redis://default:AUuWAAIncDI0NmNhNGExMDFkMDg0Njg0YTA0OTZlNWNiMWQ0ODVlY3AyMTkzNTA@artistic-boxer-19350.upstash.io:6379")
+
+client = AsyncIOMotorClient(MONGO_URI)
 db = client.urban_growth
 tasks = db.tasks
 
-# Redis + RQ Queue
-redis_conn = Redis.from_url(os.getenv("REDIS_URL", "redis://default:AUuWAAIncDI0NmNhNGExMDFkMDg0Njg0YTA0OTZlNWNiMWQ0ODVlY3AyMTkzNTA@artistic-boxer-19350.upstash.io:6379"))
+redis_conn = Redis.from_url(REDIS_URL)
 q = Queue("urban_predict", connection=redis_conn)
 
+# === Import ML Function ===
+from ml.predict import run_prediction
+
+# === Request Model ===
 class AOIRequest(BaseModel):
     aoi: dict
 
-# Routes
+# === Routes ===
 @app.get("/")
 async def root():
-    return {"message": "Urban Growth Prediction API - LIVE"}
+    return {"message": "Urban Growth API LIVE — Ready for Flutter"}
 
 @app.post("/api/upload")
 async def upload_file(file: UploadFile = File(...)):
-    if not file.filename.endswith(".zip"):
+    if not file.filename.lower().endswith(".zip"):
         raise HTTPException(400, "Only .zip files allowed")
     
     task_id = str(uuid.uuid4())
@@ -60,23 +67,23 @@ async def upload_file(file: UploadFile = File(...)):
         "result": None
     })
     
-    return {"task_id": task_id, "message": "File uploaded"}
+    return {"task_id": task_id, "message": "File uploaded successfully"}
 
 @app.post("/api/predict/{task_id}")
 async def predict(task_id: str, req: AOIRequest):
     task = await tasks.find_one({"task_id": task_id})
     if not task or task["status"] != "uploaded":
-        raise HTTPException(400, "Task not found or already processed")
+        raise HTTPException(400, "Invalid task or already processed")
     
-    # Enqueue prediction job
-    job = q.enqueue("ml.predict.run_prediction", task["file_path"], req.aoi)
+    # Enqueue job
+    job = q.enqueue(run_prediction, task["file_path"], json.dumps(req.aoi))
     
     await tasks.update_one(
         {"task_id": task_id},
-        {"$set": {"status": "queued", "rq_job_id": job.id}}
+        {"$set": {"status": "processing", "job_id": job.id}}
     )
     
-    return {"task_id": task_id, "job_id": job.id, "status": "queued"}
+    return {"task_id": task_id, "job_id": job.id, "status": "processing"}
 
 @app.get("/api/tasks/{task_id}")
 async def get_task(task_id: str):
@@ -84,23 +91,31 @@ async def get_task(task_id: str):
     if not task:
         raise HTTPException(404, "Task not found")
     
-    if task["status"] == "completed":
-        return task
-    
-    # Check RQ job status
-    if "rq_job_id" in task:
-        from rq.job import Job
+    # Check job status
+    if task["status"] == "processing" and "job_id" in task:
         try:
-            job = Job.fetch(task["rq_job_id"], connection=redis_conn)
+            job = Job.fetch(task["job_id"], connection=redis_conn)
             if job.is_finished:
                 result = job.result
                 await tasks.update_one(
                     {"task_id": task_id},
                     {"$set": {"status": "completed", "result": result}}
                 )
-                task["result"] = result
                 task["status"] = "completed"
+                task["result"] = result
         except:
             pass
     
     return task
+
+# === BACKGROUND RQ WORKER (Runs in same process) ===
+def start_worker():
+    from rq.worker import SimpleWorker
+    worker = SimpleWorker([q], connection=redis_conn)
+    print("RQ Worker STARTED — Processing jobs...")
+    worker.work()
+
+# Start worker in background thread
+threading.Thread(target=start_worker, daemon=True).start()
+
+print("FastAPI + RQ Worker READY")
